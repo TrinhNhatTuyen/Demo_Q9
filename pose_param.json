@@ -1,0 +1,8 @@
+{   
+    "cam_index": [10],
+    "humanpose_conf": 80,
+    "pose_thres": 80,
+    "queue_len": 15,
+    "n": 5,
+    "scale": 0.5
+  }

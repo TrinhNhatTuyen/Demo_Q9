@@ -1,0 +1,8 @@
+{   
+    "cam_index": [9, 10],
+    "firesmoke_conf": 0.3,
+    "humanpose_conf": 0.6,
+    "queue_len": 20,
+    "n": 2,
+    "scale": 0.5
+  }
