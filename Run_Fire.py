@@ -40,6 +40,8 @@ n = params['n']               # Số frame phát hiện khói lửa tối thiể
 scale = params['scale']
 send = params['send']
 diff_ratio = params['diff_ratio']
+overlap_ratio = params['overlap_ratio']
+
 
 # firesmoke_conf = 0.3 # Ngưỡng phát hiện khói và lửa
 # humanpose_conf = 0.6 # Ngưỡng phát hiện người
@@ -234,7 +236,7 @@ def post_ntf_knownperson_detected(faceid, cameraname, fcm_list, formatted_time):
 
     push_alert(fcm_list=fcm_list, title="Phát hiện người quen", body=body)
 
-def overlap(box1, box2, ratio=0.1):
+def overlap(box1, box2, ratio=overlap_ratio):
     """
     Hàm tính tỉ lệ   Vùng box1 trùng với box2   so với   Kích thước box1
 
@@ -294,7 +296,42 @@ def calculate_diff(box, frame1, frame2, ratio=diff_ratio):
     diff = np.count_nonzero(diff_image) / diff_image.size
 
     return diff>ratio
+
+def diff_boxes(previous_frame, current_frame):
+    kernel_size = (21,21)
     
+    previous_frame = cv2.cvtColor(previous_frame,cv2.COLOR_BGR2GRAY)
+    previous_frame = cv2.GaussianBlur(previous_frame,kernel_size,0)
+    
+    current_frame = cv2.cvtColor(current_frame,cv2.COLOR_BGR2GRAY)
+    current_frame = cv2.GaussianBlur(current_frame,kernel_size,0)
+    
+    
+    diff = cv2.absdiff(previous_frame,current_frame)
+    thresh = cv2.threshold(diff,30,255,cv2.THRESH_BINARY)[1]
+    thresh = cv2.dilate(thresh, None, iterations = 2)
+    
+    """
+        'cnts': Danh sách các đường viền được tìm thấy.
+        'res': Ảnh kết quả sau khi đã tìm các đường viền. (k dùng)
+    """
+    cnts,res = cv2.findContours(thresh.copy(),
+        cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    diff_boxs = [] 
+    for contour in cnts:
+        if cv2.contourArea(contour) < 3600:
+            continue
+        (x,y,w,h) = cv2.boundingRect(contour)
+        left = x
+        top = y
+        right = x + w
+        bottom = y + h
+        
+        diff_boxs.append([left, top, right, bottom])
+    
+    return diff_boxs
+
 def main():
     # download_hinhtrain()
     # known_persons = load_hinhtrain()
@@ -309,11 +346,6 @@ def main():
     #     cam_data[10], 
     #     # cam_data[11],
     #     ] #ff
-    # cam_data = [cam_data[13]] # datlongan - Camera 02
-    # cam_data = [cam_data[14]] # Cam demo1-2
-    # cam_data = [cam_data[9]] #Camera02 - Cam nha bep
-    # cam_data = [cam_data[10]] #Camera04 - Cam xe may
-    # cam_data = [cam_data[6], cam_data[9]]
     #------------------------------------ Các thông tin của Camera ------------------------------------
     url, lockpicking_area, climbing_area, fcm_list, camera_id, camera_name, homeid, lockid, related_camera_id, task = [], [], [], [], [], [], [], [], [], []
     # Bỏ qua các cam chưa nhập LockpickingArea & ClimbingArea và không có LockID
@@ -334,18 +366,16 @@ def main():
 
     #------------------------------------ FRESHEST FRAME ------------------------------------
     fresh, frame, cnt, first_frame, second_frame, t_oldframe, None_frame, q_knownperson, q_lockpicking, q_climbing, lastest_detected_face = [], [], [], [], [], [], [], [], [], [], []
-    previousframe, q_fire, q_smoke, q_fire_box, q_smoke_box = [], [], [], [], []
+    previous_frame, get_previous_frame, q_fire, q_smoke, q_fire_box, q_smoke_box = [], [], [], [], [], []
     for i in range(len(url)):
         fresh.append(FreshestFrame(cv2.VideoCapture(url[i])))
-        # fresh.append(FreshestFrame(cv2.VideoCapture("rtsp://admin:1qazxsw2@192.168.6.64:5580/cam/realmonitor?channel=1&subtype=0&unicast=true")))
-        # fresh.append(FreshestFrame(cv2.VideoCapture('rtsp://admin:Dat1qazxsw2@kbplawyer.cameraddns.net:5543/cam/realmonitor?channel=1&subtype=0&unicast=true')))
-        # fresh.append(FreshestFrame(cv2.VideoCapture('rtsp://admin:1qazxsw2@kbplawyer.cameraddns.net:5549/cam/realmonitor?channel=1&subtype=0&unicast=true')))
-        # fresh.append(FreshestFrame(cv2.VideoCapture('C:/Users/Administrator/Documents/Zalo Received Files/MOV_0048.mp4')))
+
         frame.append(object())
         cnt.append(0)
         first_frame.append(None)
         second_frame.append(None)
-        previousframe.append(None)
+        previous_frame.append(None)
+        # get_previous_frame.append(None)
         t_oldframe.append(None)
         None_frame.append(0)
         lastest_detected_face.append(None)
@@ -354,14 +384,15 @@ def main():
         q_knownperson.append(Queue(maxsize=10))
         q_fire.append(Queue(maxsize=queue_len))
         q_smoke.append(Queue(maxsize=queue_len))
-        q_fire_box.append(Queue(maxsize=queue_len))
-        q_smoke_box.append(Queue(maxsize=queue_len))
+        # q_fire_box.append(Queue(maxsize=queue_len))
+        # q_smoke_box.append(Queue(maxsize=queue_len))
     
     #======================= Params =======================#
     label_mapping = {
         0: "fire",
         1: "smoke",
         }
+    # cap = cv2.VideoCapture('a.mp4')
     #===========================================================================================================#
     try:
         while True:
@@ -372,33 +403,39 @@ def main():
             
             for CC in range(len(url)):
                 cnt[CC],frame[CC] = fresh[CC].read(seqnumber=cnt[CC]+1, timeout=5)
-                # frame[CC] = cv2.flip(frame[CC], 0)
+                # cnt[CC],frame[CC] = cap.read()
 
-                if not cnt[CC]:
-                    break
-                # frame[CC] = cv2.resize(frame[CC], (1920,1080))
-                if not cnt[CC]:
-                    print(f"Timeout, can't read new frame of cam {CC}!")
-                    raise Exception()
-                
+                # Nếu đọc được frame là None
+                if frame[CC] is None:
+                    None_frame[CC]+=1
+                    
+                # Nếu đọc được 5 frame là None
                 if None_frame[CC]>5:
                     print("Cannot read frame from camera!")
                     raise Exception()
-                
+
                 # dùng để tính toán FPS
                 timer =time.time()
                 if t_oldframe[CC] is None:
                     t_oldframe[CC] = timer
                 
-                # gọi lỗi nếu k đọc được frame từ camera
-                if first_frame[CC] is None:
-                    first_frame[CC] = frame[CC].copy()
-                    None_frame[CC]+=1
-                    continue
                 try:
                     frame[CC] = cv2.resize(frame[CC], (1920,1080))
                 except:
                     pass
+                
+                if previous_frame[CC] is None:
+                    previous_frame[CC] = frame[CC].copy()
+                    continue
+                
+                # Lưu 2 background đầu tiên -> continue
+                # for i in previous_frame[CC]:
+                #     if i is None:
+                #         i = frame[CC].copy()
+                #         continue
+                
+                #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Từ frame thứ 2 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                
                 current_time = datetime.datetime.now()
                 
                 fps = 1/(timer-t_oldframe[CC])
@@ -409,7 +446,23 @@ def main():
 
                 # second_frame[CC] = frame[CC].copy()
                 annotated_frame = frame[CC].copy()
+                #=================================================================================================#
                 
+                # Nếu KHÔNG có chuyển động thì KHÔNG PREDICT
+                frame_diff = diff_boxes(previous_frame[CC], frame[CC].copy())
+                if len(frame_diff)==0:
+                    
+                    result_queue(q_fire[CC], 0)
+                    result_queue(q_smoke[CC], 0)
+                    
+                    # Hiện FPS
+                    cv2.putText(annotated_frame, "fps: {:.2f}".format(fps), (20,50),cv2.FONT_HERSHEY_SIMPLEX, 1, (23, 155, 255), 2)
+
+                    cv2.imshow('Fire - ' + camera_name[CC], 
+                                cv2.resize(annotated_frame, (int((annotated_frame.shape[1])*scale),int((annotated_frame.shape[0])*scale))))
+                    continue
+                else:
+                    previous_frame[CC] = frame[CC].copy()
 
                 #=================================================================================================#
                 
@@ -423,28 +476,24 @@ def main():
                 
                 copy_frame = frame[CC].copy()
                 # Nhận diện con người
-                results2 = pose_model.predict(source=copy_frame, conf=humanpose_conf, device=device, save=False, classes=[0])
+                results_human = pose_model.predict(source=copy_frame, conf=humanpose_conf, device=device, save=False, classes=[0])
                 
-                if previousframe[CC] is None:
-                    previousframe[CC] = frame[CC].copy()
-                
-                annotated_frame = results2[0].plot(boxes=False)
+                annotated_frame = results_human[0].plot(boxes=False)
                 
                 # Nếu có người
-                if len(results2[0].boxes.data)>0:
+                if len(results_human[0].boxes.data)>0:
                     no_person = False
                     result_queue(q_fire[CC], 2)
                     result_queue(q_smoke[CC], 2)
                 else:    
                     # Nhận diện lửa khói
-                    results = fire_model.predict(source=copy_frame, conf=firesmoke_conf, device=device, save=False)
+                    results_fire = fire_model.predict(source=copy_frame, conf=firesmoke_conf, device=device, save=False)
                     
                     # Vẽ box cho khói-lửa
-                    for result in results[0].boxes.data:
+                    for result in results_fire[0].boxes.data:
                         # Thiết lập font chữ
                         font_path = 'arial.ttf'
                         font_size = 40
-                        # catdog_overlap = None
                         font_color = (255, 255, 255)  # Màu trắng (B, G, R)
                         font = ImageFont.truetype(font_path, font_size)                                                         
 
@@ -455,23 +504,32 @@ def main():
                         bottom = int(result[3])
                         prob = result[4]*100
                         label = label_mapping.get(int(result[5]), "unknown")
-
-                        """calculate_diff để tính toán xem vùng trong box 
-                        có khác biệt đáng kể gì so với 1 khoảng tgian trước đó k"""
                         
                         if label=='fire':
                             background_color = (0, 0, 255)  # Màu đỏ (B, G, R)
                             text = "Lửa ({:.2f}%)".format(prob)
                             if max_prob_fire==None or max_prob_fire<prob:
-                                max_prob_fire=prob
-                                fire_box = [left,top,right,bottom]
+                                for i in frame_diff:
+                                    if overlap(i, [left,top,right,bottom]):
+                                        max_prob_fire=prob
+                                        fire_box = [left,top,right,bottom]
+                                        cv2.rectangle(annotated_frame, (i[0], i[1]), (i[2], i[3]), (93, 242, 245), thickness=2)
+                                        break
+                                # max_prob_fire=prob
+                                # fire_box = [left,top,right,bottom]
 
                         elif label=='smoke':
                             background_color = (224, 144, 139)
                             text = "Khói ({:.2f}%)".format(prob)
                             if max_prob_smoke==None or max_prob_smoke<prob:
-                                max_prob_smoke=prob
-                                smoke_box = [left,top,right,bottom]
+                                for i in frame_diff:
+                                    if overlap(i, [left,top,right,bottom]):
+                                        max_prob_smoke=prob
+                                        smoke_box = [left,top,right,bottom]
+                                        cv2.rectangle(annotated_frame, (i[0], i[1]), (i[2], i[3]), (93, 242, 245), thickness=2)
+                                        break
+                                # max_prob_smoke=prob
+                                # smoke_box = [left,top,right,bottom]
                         
                         cv2.rectangle(annotated_frame, (left,top), (right,bottom), background_color, thickness=3, lineType=cv2.LINE_AA)
                             
@@ -494,123 +552,63 @@ def main():
                         # Chuyển đổi ảnh PIL thành ảnh Numpy
                         annotated_frame = np.array(pil_image)
                 
+                #-----------------------------------------------------------------------
+                
+                
+                #-----------------------------------------------------------------------
+                
                 # Nếu có lửa mà không có người
                 if max_prob_fire is not None and no_person:
-                    # Nếu k có obj nào trong hàng đợi
-                    if len([i for i, value in enumerate(q_fire_box[CC].queue) if isinstance(value, list)])==0:
-                        if q_fire_box[CC].full():
-                            q_fire_box[CC].get()
-                        q_fire_box[CC].put(fire_box)
-                        result_queue(q_fire[CC], 1)
-                    # Hàng đợi có obj -> Kiểm tra overlap
-                    else:
-                        overlap_flag = False
-                        for i in [index for index, value in enumerate(q_fire_box[CC].queue) if isinstance(value, list)]:
-                            dequeue_fire_box = q_fire_box[CC].queue
-                            # Nếu Overlap
-                            if overlap(dequeue_fire_box[i], fire_box) and calculate_diff(fire_box, copy_frame, previousframe[CC]):
-                                # Đưa fire_box vào q_fire_box
-                                if q_fire_box[CC].full():
-                                    q_fire_box[CC].get()
-                                q_fire_box[CC].put(fire_box)
-                                
-                                # Kiểm tra hàng đợi, đủ thì cảnh báo
-                                if result_queue(q_fire[CC], 1):
-                                    
-                                    # text = 'Có cháy' + " ({:.2f}%)".format(max_prob_fire)
-                                    text = 'Có cháy'
-                                    title = "Cảnh báo cháy"
-                                    if send==1:
-                                        push_alert(fcm_list=fcm_list[CC], title=title, body=text, rtsp=url[CC], camera_id=camera_id[CC])# + formatted_time_ntf)
-                                    if send==0:
-                                        push_alert(fcm_list=fcm_dat123(), title=title, body=text, rtsp=url[CC], camera_id=camera_id[CC])
-                                    save_ntf_img(annotated_frame, 
-                                                camera_id=get_camera_id(url[CC]), 
-                                                title=title, 
-                                                body=text,
-                                                notification_type='Fire',
-                                                formatted_time=formatted_time,
-                                                send=send) # Lưu lại thông tin cảnh báo
-                                overlap_flag = True
-                                break
 
-                        # Nếu KHÔNG Overlap
-                        if not overlap_flag:
-                            result_queue(q_fire[CC], 0)
-                            if q_fire_box[CC].full():
-                                q_fire_box[CC].get()
-                            q_fire_box[CC].put(fire_box)            # Vẫn put "fire_box" vào
-                                
+                    if result_queue(q_fire[CC], 1):         
+                        # text = 'Có cháy' + " ({:.2f}%)".format(max_prob_fire)
+                        text = 'Có cháy'
+                        title = "Cảnh báo cháy"
+                        # print(text)
+                        if send==1:
+                            push_alert(fcm_list=fcm_list[CC], title=title, body=text, rtsp=url[CC], camera_id=camera_id[CC])# + formatted_time_ntf)
+                        if send==0:
+                            push_alert(fcm_list=fcm_dat123(), title=title, body=text, rtsp=url[CC], camera_id=camera_id[CC])
+                        save_ntf_img(annotated_frame, 
+                                    camera_id=get_camera_id(url[CC]), 
+                                    title=title, 
+                                    body=text,
+                                    notification_type='Fire',
+                                    formatted_time=formatted_time,
+                                    send=send) # Lưu lại thông tin cảnh báo
+
                 # Nếu không có lửa
-                elif max_prob_fire is None:
+                elif max_prob_fire is None and no_person:
                     result_queue(q_fire[CC], 0)
-                    if q_fire_box[CC].full():
-                        q_fire_box[CC].get()
-                    q_fire_box[CC].put(0)
+
                 #---------------------------------------------------------------------------------------
                 # Nếu có khói mà không có người
                 if max_prob_smoke is not None and no_person:
-                    # Nếu k có obj nào trong hàng đợi
-                    if len([i for i, value in enumerate(q_smoke_box[CC].queue) if isinstance(value, list)])==0:
-                        if q_smoke_box[CC].full():
-                            q_smoke_box[CC].get()
-                        q_smoke_box[CC].put(smoke_box)
-                        result_queue(q_smoke[CC], 1)
-                    # Hàng đợi có obj -> Kiểm tra overlap
-                    else:
-                        overlap_flag = False
-                        for i in [index for index, value in enumerate(q_smoke_box[CC].queue) if isinstance(value, list)]:
-                            dequeue_smoke_box = q_smoke_box[CC].queue
-                            # Nếu Overlap
-                            if overlap(dequeue_smoke_box[i], smoke_box) and calculate_diff(smoke_box, copy_frame, previousframe[CC]):
-                                # Đưa smoke_box vào q_smoke_box
-                                if q_smoke_box[CC].full():
-                                    q_smoke_box[CC].get()
-                                q_smoke_box[CC].put(smoke_box)
-                                
-                                # Kiểm tra hàng đợi, đủ thì cảnh báo
-                                if result_queue(q_smoke[CC], 1):
-                                    
-                                    # text = 'Có khói' + " ({:.2f}%)".format(max_prob_smoke)
-                                    text = 'Có khói'
-                                    title = "Cảnh báo cháy"
-                                    if send==1:
-                                        push_alert(fcm_list=fcm_list[CC], title=title, body=text, rtsp=url[CC], camera_id=camera_id[CC])# + formatted_time_ntf)
-                                    if send==0:
-                                        push_alert(fcm_list=fcm_dat123(), title=title, body=text, rtsp=url[CC], camera_id=camera_id[CC])
-                                    save_ntf_img(annotated_frame, 
-                                                camera_id=get_camera_id(url[CC]), 
-                                                title=title, 
-                                                body=text,
-                                                notification_type='Fire',
-                                                formatted_time=formatted_time,
-                                                send=send) # Lưu lại thông tin cảnh báo
-                                overlap_flag = True
-                                break
 
-                        # Nếu KHÔNG Overlap
-                        if not overlap_flag:
-                            result_queue(q_smoke[CC], 0)
-                            if q_smoke_box[CC].full():
-                                q_smoke_box[CC].get()
-                            q_smoke_box[CC].put(smoke_box)            # Vẫn put "smoke_box" vào
+                    if result_queue(q_smoke[CC], 1):
+                        # text = 'Có khói' + " ({:.2f}%)".format(max_prob_smoke)
+                        text = 'Có khói'
+                        title = "Cảnh báo cháy"
+                        # print(text)
+                        if send==1:
+                            push_alert(fcm_list=fcm_list[CC], title=title, body=text, rtsp=url[CC], camera_id=camera_id[CC])# + formatted_time_ntf)
+                        if send==0:
+                            push_alert(fcm_list=fcm_dat123(), title=title, body=text, rtsp=url[CC], camera_id=camera_id[CC])
+                        save_ntf_img(annotated_frame, 
+                                    camera_id=get_camera_id(url[CC]), 
+                                    title=title, 
+                                    body=text,
+                                    notification_type='Fire',
+                                    formatted_time=formatted_time,
+                                    send=send) # Lưu lại thông tin cảnh báo
+                            
                     
                 # Nếu không có khói
-                elif len(results2[0].boxes.data)>0:
+                elif max_prob_smoke is None and no_person:
                     result_queue(q_smoke[CC], 0)
-                    if q_smoke_box[CC].full():
-                        q_smoke_box[CC].get()
-                    q_smoke_box[CC].put(0)
                                 
                 #===========================================================================================#
-                
-                try:
-                    if len(results[0].boxes.data)==0 and len(results2[0].boxes.data)==0 and (t.second%10)==0:
-                        previousframe[CC] = frame[CC].copy()
-                except:
-                    if len(results2[0].boxes.data)==0 and (t.second%10)==0:
-                        previousframe[CC] = frame[CC].copy()
-                    
+
                 # Hiện FPS
                 cv2.putText(annotated_frame, "fps: {:.2f}".format(fps), (20,50),cv2.FONT_HERSHEY_SIMPLEX, 1, (23, 155, 255), 2)
 

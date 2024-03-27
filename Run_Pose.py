@@ -256,9 +256,12 @@ def detect_skeleton(frame):
     return pose_model(frame, conf=humanpose_conf, save=False)
 # face_reg_data = get_FaceRegData()
 
+download_hinhtrain()
+known_persons = load_hinhtrain()
+
 def main():
-    download_hinhtrain()
-    known_persons = load_hinhtrain()
+    # download_hinhtrain()
+    # known_persons = load_hinhtrain()
     cam_data = get_camera_data()
     
     indexs = params["cam_index"]  
@@ -340,28 +343,20 @@ def main():
             
             for CC in range(len(url)):
                 cnt[CC],frame[CC] = fresh[CC].read(seqnumber=cnt[CC]+1, timeout=5)
-
-                if not cnt[CC]:
-                    break
-                
-                if not cnt[CC]:
-                    print(f"Timeout, can't read new frame of cam {CC}!")
-                    raise Exception()
-                
+    
+                # Nếu đọc được frame là None
+                if frame[CC] is None:
+                    None_frame[CC]+=1
+                    
+                # Nếu đọc được 5 frame là None
                 if None_frame[CC]>5:
                     print("Cannot read frame from camera!")
                     raise Exception()
-                
+
                 # dùng để tính toán FPS
-                timer = time.time()
+                timer =time.time()
                 if t_oldframe[CC] is None:
-                    t_oldframe[CC] = timer
-                
-                # gọi lỗi nếu k đọc được frame từ camera
-                if first_frame[CC] is None:
-                    first_frame[CC] = frame[CC].copy()
-                    None_frame[CC]+=1
-                    continue
+                    t_oldframe[CC] = timer - 10
                 
                 try:
                     frame[CC] = cv2.resize(frame[CC], (1920,1080))
