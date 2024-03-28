@@ -491,6 +491,8 @@ def main():
                     
                     # Vẽ box cho khói-lửa
                     for result in results_fire[0].boxes.data:
+                        draw_box_flag = False
+                        
                         # Thiết lập font chữ
                         font_path = 'arial.ttf'
                         font_size = 40
@@ -511,6 +513,7 @@ def main():
                             if max_prob_fire==None or max_prob_fire<prob:
                                 for i in frame_diff:
                                     if overlap(i, [left,top,right,bottom]):
+                                        draw_box_flag = True
                                         max_prob_fire=prob
                                         fire_box = [left,top,right,bottom]
                                         cv2.rectangle(annotated_frame, (i[0], i[1]), (i[2], i[3]), (93, 242, 245), thickness=2)
@@ -524,6 +527,7 @@ def main():
                             if max_prob_smoke==None or max_prob_smoke<prob:
                                 for i in frame_diff:
                                     if overlap(i, [left,top,right,bottom]):
+                                        draw_box_flag = True
                                         max_prob_smoke=prob
                                         smoke_box = [left,top,right,bottom]
                                         cv2.rectangle(annotated_frame, (i[0], i[1]), (i[2], i[3]), (93, 242, 245), thickness=2)
@@ -531,26 +535,27 @@ def main():
                                 # max_prob_smoke=prob
                                 # smoke_box = [left,top,right,bottom]
                         
-                        cv2.rectangle(annotated_frame, (left,top), (right,bottom), background_color, thickness=3, lineType=cv2.LINE_AA)
-                            
-                        # Tạo một ảnh PIL từ hình ảnh Numpy
-                        pil_image = Image.fromarray(annotated_frame)
+                        if draw_box_flag:
+                            cv2.rectangle(annotated_frame, (left,top), (right,bottom), background_color, thickness=3, lineType=cv2.LINE_AA)
+                                
+                            # Tạo một ảnh PIL từ hình ảnh Numpy
+                            pil_image = Image.fromarray(annotated_frame)
 
-                        # Tạo đối tượng vẽ trên ảnh PIL
-                        draw = ImageDraw.Draw(pil_image)
-                        
-                        # Vẽ nền cho text 
-                        text_width, text_height = draw.textsize(text, font=font)
-                        t_left = int(result[0])-2
-                        t_top = int(result[1])-text_height-3
-                        rectangle_position = (t_left, t_top, t_left + text_width, t_top + text_height)
-                        draw.rectangle(rectangle_position, fill=background_color)
-                        
-                        text_position = (t_left, t_top)
-                        # Vẽ văn bản màu đỏ
-                        draw.text(text_position, text, font=font, fill=font_color)
-                        # Chuyển đổi ảnh PIL thành ảnh Numpy
-                        annotated_frame = np.array(pil_image)
+                            # Tạo đối tượng vẽ trên ảnh PIL
+                            draw = ImageDraw.Draw(pil_image)
+                            
+                            # Vẽ nền cho text 
+                            text_width, text_height = draw.textsize(text, font=font)
+                            t_left = int(result[0])-2
+                            t_top = int(result[1])-text_height-3
+                            rectangle_position = (t_left, t_top, t_left + text_width, t_top + text_height)
+                            draw.rectangle(rectangle_position, fill=background_color)
+                            
+                            text_position = (t_left, t_top)
+                            # Vẽ văn bản màu đỏ
+                            draw.text(text_position, text, font=font, fill=font_color)
+                            # Chuyển đổi ảnh PIL thành ảnh Numpy
+                            annotated_frame = np.array(pil_image)
                 
                 #-----------------------------------------------------------------------
                 
